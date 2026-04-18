@@ -1,0 +1,10 @@
+[project]
+name = "gman"
+version = "0.1.0"
+description = "Local cloned Git repository manager"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+gman = "gman.cli:main"
