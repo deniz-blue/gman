@@ -19,6 +19,17 @@ class FetchResult:
     updated_refs: tuple[str, ...] = ()
 
 
+@dataclass(slots=True, frozen=True)
+class RunResult:
+    repository: Repository
+    command: str
+    success: bool
+    exit_code: int
+    duration_ms: int
+    stdout: str = ""
+    stderr: str = ""
+
+
 @dataclass(slots=True)
 class AppConfig:
     watched_roots: list[Path] = field(default_factory=list)

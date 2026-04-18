@@ -4,6 +4,7 @@ from .models import (
     FetchResult,
     Repository,
     RepositoryStatus,
+    RunResult,
 )
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "GitCommandExecutor",
     "Repository",
     "RepositoryStatus",
+    "RunResult",
 ]

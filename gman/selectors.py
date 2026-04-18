@@ -142,8 +142,8 @@ class ListOptions:
     def from_args(cls, args) -> ListOptions:
         return cls(
             status=args.status,
-            dirty_only=args.dirty_only,
-            up_to_date_only=args.up_to_date_only,
+            dirty_only=args.dirty,
+            up_to_date_only=args.clean,
         )
 
     def requires_status(self, sort_by: str) -> bool:
