@@ -37,7 +37,7 @@ class OutputPrinter(ABC):
         raise NotImplementedError
     
     @abstractmethod
-    def print_run_results(self, results: list[RunResult]) -> None:
+    def finalize_run(self, results: list[RunResult]) -> None:
         raise NotImplementedError
 
 
@@ -125,6 +125,11 @@ class PrettyPrinter(OutputPrinter):
             row.append(self._blue(self._shorten_path(str(result.repository.path))))
         rows.append(row)
         self._print_table(headers, rows)
+
+    def finalize_run(self, results: list[RunResult]) -> None:
+        # Pretty printer prints individual run results via print_before_run/print_after_run;
+        # no aggregated final output is required.
+        return None
 
     def _shorten_path(self, path_text: str) -> str:
         if self.max_path_length <= 0 or len(path_text) <= self.max_path_length:
@@ -246,6 +251,19 @@ class JsonPrinter(OutputPrinter):
         ]
         print(json.dumps(payload, indent=2, sort_keys=True))
 
+    def print_before_run(self, repository: Repository) -> None:
+        # JSON output suppresses per-repository pre/post output; final output is emitted
+        # from `finalize_run`.
+        return None
+
+    def print_after_run(self, result: RunResult) -> None:
+        # JSON output suppresses per-repository pre/post output; final output is emitted
+        # from `finalize_run`.
+        return None
+
+    def finalize_run(self, results: list[RunResult]) -> None:
+        self.print_run_results(results)
+
     def print_clone_result(self, remote: str, destination: Path) -> None:
         payload = {
             "remote": remote,
@@ -285,6 +303,18 @@ class WhitespacePrinter(OutputPrinter):
                 f"{result.repository.path}\t{result.repository.name}\t{outcome}\t"
                 f"{result.exit_code}\t{result.duration_ms}\t{stderr_line}"
             )
+    def print_before_run(self, repository: Repository) -> None:
+        # Whitespace output suppresses per-repository pre/post output; final output is emitted
+        # from `finalize_run`.
+        return None
+
+    def print_after_run(self, result: RunResult) -> None:
+        # Whitespace output suppresses per-repository pre/post output; final output is emitted
+        # from `finalize_run`.
+        return None
+
+    def finalize_run(self, results: list[RunResult]) -> None:
+        self.print_run_results(results)
 
     def print_clone_result(self, remote: str, destination: Path) -> None:
         print(f"{remote}\t{destination}")

@@ -111,7 +111,7 @@ class CliFilteringSortingTests(unittest.TestCase):
                 stderr="",
             )
 
-            with patch("gman.cli._run_command_in_repositories", return_value=[fake_result]) as run_mock:
+            with patch("gman.cli.run_repository_command", return_value=fake_result) as run_mock:
                 output = io.StringIO()
                 with redirect_stdout(output):
                     exit_code = main(["-c", str(config_path), "fetch"])

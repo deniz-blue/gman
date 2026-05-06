@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 from pathlib import Path
 import shlex
 import subprocess
@@ -101,15 +101,16 @@ def _add_repo_selection_args(parser: ArgumentParser, sort_choices: tuple[str, ..
     parser.add_argument("-l", "--limit", type=int, default=None, help="Maximum number of rows to output")
 
 # Create sorting and limiting operators based on command-line arguments
-def compose_repository_pipeline(args) -> list:
+# Create sorting and limiting operators based on command-line arguments
+def build_repository_pipeline(args) -> list:
     return [selectors.repository_sort_from_args(args), selectors.repository_limit_from_args(args)]
 
 # Apply repository-level filters and sorting based on command-line arguments
-def apply_repository_pipeline(repositories: list[Repository], args) -> list[Repository]:
-    return selectors.apply_operators(repositories, compose_repository_pipeline(args))
+def run_repository_pipeline(repositories: list[Repository], args) -> list[Repository]:
+    return selectors.apply_operators(repositories, build_repository_pipeline(args))
 
 # run a single repository command and return result
-def execute_run_command(repository: Repository, command: str, printer, args) -> RunResult:
+def run_repository_command(repository: Repository, command: str, printer, args: Namespace) -> RunResult:
     started_at = time.perf_counter()
     completed = subprocess.run(
         command,
@@ -120,7 +121,7 @@ def execute_run_command(repository: Repository, command: str, printer, args) -> 
         shell=True,
     )
     duration_ms = int((time.perf_counter() - started_at) * 1000)
-    if pipe_stdout and completed.stdout:
+    if getattr(args, "pipe_stdout", False) and completed.stdout:
         print(completed.stdout, end="")
     return RunResult(
         repository=repository,
@@ -131,6 +132,9 @@ def execute_run_command(repository: Repository, command: str, printer, args) -> 
         stdout=completed.stdout,
         stderr=completed.stderr,
     )
+
+
+
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -159,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "list":
         if not selectors.requires_status(args):
-            repositories = apply_repository_pipeline(repositories, args)
+            repositories = run_repository_pipeline(repositories, args)
             printer.print_repositories(repositories)
             return 0
 
@@ -180,9 +184,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "fetch":
-        repositories = apply_repository_pipeline(repositories, args)
+        repositories = run_repository_pipeline(repositories, args)
         fetch_command = f"git fetch --prune {shlex.quote(config.default_remote_name)}"
-        run_results = [execute_run_command(repository, fetch_command, printer, args) for repository in repositories]
+        run_results = [run_repository_command(repository, fetch_command, printer, args) for repository in repositories]
         fetch_results: list[FetchResult] = []
         for result in run_results:
             output = "\n".join(value for value in (result.stdout.strip(), result.stderr.strip()) if value)
@@ -200,18 +204,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if all(result.success for result in run_results) else 1
 
     if args.command == "run":
-        repositories = apply_repository_pipeline(repositories, args)
-        exit_code = 0
+        repositories = run_repository_pipeline(repositories, args)
         run_results: list[RunResult] = []
         for repository in repositories:
             printer.print_before_run(repository)
-            result = execute_run_command(repository, args.run_command, printer, args)
+            result = run_repository_command(repository, args.run_command, printer, args)
             printer.print_after_run(result)
             run_results.append(result)
-            if not result.success:
-                exit_code = 1
-                if args.fail_fast:
-                    break
+            if not result.success and getattr(args, "fail_fast", False):
+                break
+        exit_code = 0 if all(result.success for result in run_results) else 1
         printer.finalize_run(run_results)
         return exit_code
 
