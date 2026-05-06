@@ -9,15 +9,7 @@ import time
 from .executor import GitCommandExecutor
 from .models import AppConfig, FetchResult, Repository, RunResult
 from .output import create_output_printer
-from .selectors import (
-    ListOptions,
-    RepositorySelection,
-    LimitFilter,
-    StatusSort,
-    apply_operators,
-    status_rows,
-)
-
+from . import selectors
 
 def build_parser() -> ArgumentParser:
     parser = ArgumentParser(prog="gman", description="Manage locally cloned Git repositories")
@@ -80,7 +72,6 @@ def build_parser() -> ArgumentParser:
 
     return parser
 
-
 def _add_repo_selection_args(parser: ArgumentParser, sort_choices: tuple[str, ...]) -> None:
     parser.add_argument(
         "-n",
@@ -109,59 +100,37 @@ def _add_repo_selection_args(parser: ArgumentParser, sort_choices: tuple[str, ..
     parser.add_argument("-d", "--desc", dest="descending", action="store_true", help="Sort descending")
     parser.add_argument("-l", "--limit", type=int, default=None, help="Maximum number of rows to output")
 
+# Create sorting and limiting operators based on command-line arguments
+def compose_repository_pipeline(args) -> list:
+    return [selectors.repository_sort_from_args(args), selectors.repository_limit_from_args(args)]
 
-def _run_command_in_repositories(
-    repositories: list[Repository],
-    command: str,
-    *,
-    fail_fast: bool = False,
-    pipe_stdout: bool = False,
-) -> list[RunResult]:
-    results: list[RunResult] = []
-    for repository in repositories:
-        started_at = time.perf_counter()
-        completed = subprocess.run(
-            command,
-            cwd=repository.path,
-            text=True,
-            capture_output=True,
-            check=False,
-            shell=True,
-        )
-        duration_ms = int((time.perf_counter() - started_at) * 1000)
-        if pipe_stdout and completed.stdout:
-            print(completed.stdout, end="")
-        results.append(
-            RunResult(
-                repository=repository,
-                command=command,
-                success=completed.returncode == 0,
-                exit_code=completed.returncode,
-                duration_ms=duration_ms,
-                stdout=completed.stdout,
-                stderr=completed.stderr,
-            )
-        )
-        if fail_fast and completed.returncode != 0:
-            break
-    return results
+# Apply repository-level filters and sorting based on command-line arguments
+def apply_repository_pipeline(repositories: list[Repository], args) -> list[Repository]:
+    return selectors.apply_operators(repositories, compose_repository_pipeline(args))
 
-
-def _fetch_results_from_run_results(run_results: list[RunResult]) -> list[FetchResult]:
-    fetch_results: list[FetchResult] = []
-    for result in run_results:
-        output = "\n".join(value for value in (result.stdout.strip(), result.stderr.strip()) if value)
-        updated_refs = tuple(line.strip() for line in output.splitlines() if line.strip())
-        fetch_results.append(
-            FetchResult(
-                repository=result.repository,
-                success=result.success,
-                error_message=result.stderr.strip() if not result.success else None,
-                duration_ms=result.duration_ms,
-                updated_refs=updated_refs,
-            )
-        )
-    return fetch_results
+# run a single repository command and return result
+def execute_run_command(repository: Repository, command: str, printer, args) -> RunResult:
+    started_at = time.perf_counter()
+    completed = subprocess.run(
+        command,
+        cwd=repository.path,
+        text=True,
+        capture_output=True,
+        check=False,
+        shell=True,
+    )
+    duration_ms = int((time.perf_counter() - started_at) * 1000)
+    if pipe_stdout and completed.stdout:
+        print(completed.stdout, end="")
+    return RunResult(
+        repository=repository,
+        command=command,
+        success=completed.returncode == 0,
+        exit_code=completed.returncode,
+        duration_ms=duration_ms,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -185,45 +154,65 @@ def main(argv: list[str] | None = None) -> int:
             return completed.returncode
         return 0
 
-    selection = RepositorySelection.from_args(args)
-    repositories = apply_operators(config.repositories(), selection.repository_filters())
+    repository_filters = selectors.repository_filters_from_args(args)
+    repositories = selectors.apply_operators(config.repositories(), repository_filters)
 
     if args.command == "list":
-        options = ListOptions.from_args(args)
-        if not options.requires_status(selection.sort_by):
-            repositories = apply_operators(repositories, selection.repository_ordering() + selection.repository_limit())
+        if not selectors.requires_status(args):
+            repositories = apply_repository_pipeline(repositories, args)
             printer.print_repositories(repositories)
             return 0
 
-        rows = status_rows(repositories)
-        row_operators = options.status_filters() + [
-            StatusSort(sort_by=selection.sort_by, descending=selection.descending),
-            LimitFilter(selection.limit),
-        ]
-        rows = apply_operators(rows, row_operators)
+        rows = selectors.status_rows(repositories)
+        rows = selectors.apply_operators(
+            rows,
+            [
+                *selectors.status_filters_from_args(args),
+                selectors.status_sort_from_args(args),
+                selectors.repository_limit_from_args(args),
+            ],
+        )
 
-        if options.should_print_status(selection.sort_by):
+        if getattr(args, "status", False) or selectors.status_filters_from_args(args) or selectors.status_sort_from_args(args).requires_status:
             printer.print_status_rows(rows)
         else:
             printer.print_repositories([row.repository for row in rows])
         return 0
 
     if args.command == "fetch":
-        repositories = apply_operators(repositories, selection.repository_ordering() + selection.repository_limit())
+        repositories = apply_repository_pipeline(repositories, args)
         fetch_command = f"git fetch --prune {shlex.quote(config.default_remote_name)}"
-        run_results = _run_command_in_repositories(repositories, fetch_command)
-        printer.print_fetch_results(_fetch_results_from_run_results(run_results))
+        run_results = [execute_run_command(repository, fetch_command, printer, args) for repository in repositories]
+        fetch_results: list[FetchResult] = []
+        for result in run_results:
+            output = "\n".join(value for value in (result.stdout.strip(), result.stderr.strip()) if value)
+            updated_refs = tuple(line.strip() for line in output.splitlines() if line.strip())
+            fetch_results.append(
+                FetchResult(
+                    repository=result.repository,
+                    success=result.success,
+                    error_message=result.stderr.strip() if not result.success else None,
+                    duration_ms=result.duration_ms,
+                    updated_refs=updated_refs,
+                )
+            )
+        printer.print_fetch_results(fetch_results)
         return 0 if all(result.success for result in run_results) else 1
 
     if args.command == "run":
-        repositories = apply_operators(repositories, selection.repository_ordering() + selection.repository_limit())
-        run_results = _run_command_in_repositories(
-            repositories,
-            args.run_command,
-            fail_fast=args.fail_fast,
-            pipe_stdout=args.pipe_stdout,
-        )
-        printer.print_run_results(run_results)
-        return 0 if all(result.success for result in run_results) else 1
+        repositories = apply_repository_pipeline(repositories, args)
+        exit_code = 0
+        run_results: list[RunResult] = []
+        for repository in repositories:
+            printer.print_before_run(repository)
+            result = execute_run_command(repository, args.run_command, printer, args)
+            printer.print_after_run(result)
+            run_results.append(result)
+            if not result.success:
+                exit_code = 1
+                if args.fail_fast:
+                    break
+        printer.finalize_run(run_results)
+        return exit_code
 
     return 1

@@ -4,7 +4,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from types import SimpleNamespace
 
+from gman import selectors
 from gman.models import AppConfig
 
 
@@ -73,6 +75,32 @@ class CoreModelTests(unittest.TestCase):
         destination = config.clone_destination("git@github.com:octocat/hello-world.git")
         expected = (Path.home() / "Source" / "Repos" / "github.com" / "octocat" / "hello-world").resolve()
         self.assertEqual(destination, expected)
+
+    def test_selector_api_exposes_explicit_operators(self) -> None:
+        args = SimpleNamespace(
+            name_contains="alpha",
+            path_contains=None,
+            under_root=[Path("/tmp")],
+            sort_by="branch",
+            descending=True,
+            limit=1,
+            status=False,
+            dirty=False,
+            clean=False,
+        )
+
+        repository_filters = selectors.repository_filters_from_args(args)
+        repository_sort = selectors.repository_sort_from_args(args)
+        status_sort = selectors.status_sort_from_args(args)
+
+        repositories = [selectors.Repository(Path("/tmp/alpha-repo")), selectors.Repository(Path("/tmp/beta-repo"))]
+        filtered = selectors.apply_operators(repositories, repository_filters)
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0].name, "alpha-repo")
+        self.assertEqual(repository_sort.sort_name, "path")
+        self.assertEqual(status_sort.sort_name, "branch")
+        self.assertTrue(selectors.requires_status(args))
 
 
 if __name__ == "__main__":

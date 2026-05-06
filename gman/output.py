@@ -23,12 +23,21 @@ class OutputPrinter(ABC):
     def print_fetch_results(self, results: list[FetchResult]) -> None:
         raise NotImplementedError
 
-    @abstractmethod
-    def print_run_results(self, results: list[RunResult]) -> None:
-        raise NotImplementedError
 
     @abstractmethod
     def print_clone_result(self, remote: str, destination: Path) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def print_before_run(self, repository: Repository) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def print_after_run(self, result: RunResult) -> None:
+        raise NotImplementedError
+    
+    @abstractmethod
+    def print_run_results(self, results: list[RunResult]) -> None:
         raise NotImplementedError
 
 
@@ -89,25 +98,6 @@ class PrettyPrinter(OutputPrinter):
             rows.append(row)
         self._print_table(headers, rows)
 
-    def print_run_results(self, results: list[RunResult]) -> None:
-        headers = ["NAME", "RESULT", "EXIT", "DURATION_MS"]
-        if self.show_path:
-            headers.append("PATH")
-
-        rows: list[list[str]] = []
-        for result in results:
-            outcome = self._green("ok") if result.success else self._red("failed")
-            row = [
-                self._bold(result.repository.name),
-                outcome,
-                str(result.exit_code),
-                str(result.duration_ms),
-            ]
-            if self.show_path:
-                row.append(self._blue(self._shorten_path(str(result.repository.path))))
-            rows.append(row)
-        self._print_table(headers, rows)
-
     def print_clone_result(self, remote: str, destination: Path) -> None:
         headers = ["NAME", "REMOTE", "RESULT"]
         row = [self._bold(destination.name), remote, self._green("cloned")]
@@ -115,6 +105,26 @@ class PrettyPrinter(OutputPrinter):
             headers.append("PATH")
             row.append(self._blue(self._shorten_path(str(destination))))
         self._print_table(headers, [row])
+
+    def print_before_run(self, repository: Repository) -> None:
+        self.print_repositories([repository])
+
+    def print_after_run(self, result: RunResult) -> None:
+        headers = ["NAME", "RESULT", "EXIT", "DURATION_MS"]
+        if self.show_path:
+            headers.append("PATH")
+        rows: list[list[str]] = []
+        outcome = self._green("ok") if result.success else self._red("failed")
+        row = [
+            self._bold(result.repository.name),
+            outcome,
+            str(result.exit_code),
+            str(result.duration_ms),
+        ]
+        if self.show_path:
+            row.append(self._blue(self._shorten_path(str(result.repository.path))))
+        rows.append(row)
+        self._print_table(headers, rows)
 
     def _shorten_path(self, path_text: str) -> str:
         if self.max_path_length <= 0 or len(path_text) <= self.max_path_length:
